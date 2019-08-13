@@ -3,15 +3,12 @@ package tofu.optics
 import cats.arrow._
 import cats.instances.either._
 import cats.syntax.either._
-import cats.syntax.option._
 import tofu.optics.classes.Category2
 
 trait OpticCompanion[O[s, t, a, b] >: PSame[s, t, a, b]] {
   self =>
   type Context <: OpticContext
   type Mono[a, b] = O[a, a, b, b]
-
-  def apply[S, T, A, B](implicit o: O[S, T, A, B]): O[S, T, A, B] = o
 
   def compose[S, T, A, B, U, V](f: O[A, B, U, V], g: O[S, T, A, B]): O[S, T, U, V]
 
@@ -72,7 +69,7 @@ object Optic {
     PSame.toGeneric(PSame.id)
 
   implicit def opticCategoryInstance[Ctx <: OpticContext]: Category[Mono[Ctx, ?, ?]] =
-    new Category[Mono[Ctx, ?, ?]] {
+    new Category[Mono[Ctx, *, *]] {
       def id[A]: Mono[Ctx, A, A]                                                    = Optic.id
       def compose[A, B, C](f: Mono[Ctx, B, C], g: Mono[Ctx, A, B]): Mono[Ctx, A, C] = g.andThen(f)
     }

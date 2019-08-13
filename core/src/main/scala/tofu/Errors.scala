@@ -50,17 +50,31 @@ trait Handle[F[_], E] extends HandleTo[F, F, E] with Restore[F] {
   def tryHandle[A](fa: F[A])(f: E => Option[A])(implicit F: Applicative[F]): F[A] =
     tryHandleWith(fa)(e => f(e).map(F.pure))
 
-  def handleWith[A](fa: F[A])(f: E => F[A]): F[A] =
-    tryHandleWith(fa)(e => Some(f(e)))
+  def handleWith[A](fa: F[A])(f: E => F[A]): F[A] = tryHandleWith(fa)(e => Some(f(e)))
 
-  def recoverWith[A](fa: F[A])(pf: PartialFunction[E, F[A]]): F[A] =
-    tryHandleWith(fa)(pf.lift)
+  def recoverWith[A](fa: F[A])(pf: PartialFunction[E, F[A]]): F[A] = tryHandleWith(fa)(pf.lift)
 
-  def recover[A](fa: F[A])(pf: PartialFunction[E, A])(implicit F: Applicative[F]): F[A] =
-    tryHandle(fa)(pf.lift)
-
+  def recover[A](fa: F[A])(pf: PartialFunction[E, A])(implicit F: Applicative[F]): F[A] = tryHandle(fa)(pf.lift)
 
   def restoreWith[A](fa: F[A])(ra: => F[A]): F[A] = handleWith(fa)(_ => ra)
+}
+
+trait OnError[F[_], E] {
+  def onErrorTry[A, B](fa: F[A])(f: E => Option[F[B]]): F[A]
+
+  def onError[A, B](fa: F[A])(f: E => F[B]): F[A] = onErrorTry(fa)(e => Some(f(e)))
+
+  def onErrorPF[A, B](fa: F[A])(f: PartialFunction[E, F[B]]): F[A] = onErrorTry(fa)(f.lift)
+}
+
+object OnError {
+  trait ByPartial[F[_], E] extends OnError[F, E] {
+    def onErr[A, B](fa: F[A])(pf: PartialFunction[E, F[B]]): F[A]
+
+    def onErrorTry[A, B](fa: F[A])(f: E => Option[F[B]]): F[A]                = onErr(fa)(CachedMatcher(f))
+    override def onError[A, B](fa: F[A])(f: E => F[B]): F[A]                  = onErr(fa) { case e => f(e) }
+    override def onErrorPF[A, B](fa: F[A])(f: PartialFunction[E, F[B]]): F[A] = onErr(fa)(f)
+  }
 }
 
 object Handle extends HandleInstances with DataEffectComp[Handle] {
@@ -70,13 +84,11 @@ object Handle extends HandleInstances with DataEffectComp[Handle] {
   trait ByRecover[F[_], E] extends Handle[F, E] {
     def recWith[A](fa: F[A])(pf: PartialFunction[E, F[A]]): F[A]
 
-    def tryHandleWith[A](fa: F[A])(f: E => Option[F[A]]): F[A] =
-      recWith(fa)(CachedMatcher(f))
+    def tryHandleWith[A](fa: F[A])(f: E => Option[F[A]]): F[A]                = recWith(fa)(CachedMatcher(f))
     override def recoverWith[A](fa: F[A])(pf: PartialFunction[E, F[A]]): F[A] = recWith(fa)(pf)
     override def recover[A](fa: F[A])(pf: PartialFunction[E, A])(implicit F: Applicative[F]): F[A] =
       recWith(fa)(pf andThen F.pure _)
   }
-
 }
 
 sealed class HandleInstances {
@@ -84,14 +96,15 @@ sealed class HandleInstances {
     new FromPrism[F, E, E1, Handle, Downcast] with HandlePrism[F, E, E1]
 }
 
-trait Errors[F[_], E] extends Raise[F, E] with Handle[F, E]
+trait Errors[F[_], E] extends Raise[F, E] with Handle[F, E] with OnError[F, E]
 
 object Errors extends ErrorInstances with DataEffectComp[Errors] {
   final implicit def errorByCatsError[F[_]: ApplicativeError[*[_], E], E, E1: ClassTag: * <:< E]: Errors[F, E1] =
-    new HandleApErr[F, E, E1] with RaiseAppApErr[F, E, E1] with Errors[F, E1]
+    new HandleApErr[F, E, E1] with RaiseApErr[F, E, E1] with Errors[F, E1]
 }
 
 trait ErrorInstances {
   final implicit def errorPrismatic[F[_], E, E1](implicit e: Errors[F, E], prism: Subset[E, E1]): Errors[F, E1] =
-    new FromPrism[F, E, E1, Errors, Subset] with RaisePrism[F, E, E1] with HandlePrism[F, E, E1] with Errors[F, E1]
+    new FromPrism[F, E, E1, Errors, Subset] with RaisePrism[F, E, E1] with HandlePrism[F, E, E1]
+    with OnErrorPrism[F, E, E1] with Errors[F, E1]
 }
